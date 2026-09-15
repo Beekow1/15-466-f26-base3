@@ -10,125 +10,263 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
-#include <random>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
-GLuint hexapod_meshes_for_lit_color_texture_program = 0;
-Load< MeshBuffer > hexapod_meshes(LoadTagDefault, []() -> MeshBuffer const * {
-	MeshBuffer const *ret = new MeshBuffer(data_path("hexapod.pnct"));
-	hexapod_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
-	return ret;
-});
+#define TileSize 1.0f
+#define Rows 6
+#define Columns 12
 
-Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
-	return new Scene(data_path("hexapod.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
-		Mesh const &mesh = hexapod_meshes->lookup(mesh_name);
+GLuint player_meshes_for_lit_color_texture_program = 0;
 
-		scene.drawables.emplace_back(transform);
-		Scene::Drawable &drawable = scene.drawables.back();
+Load<MeshBuffer> player_meshes(LoadTagDefault, []() -> MeshBuffer const *
+							   {
+	MeshBuffer const *ret = new MeshBuffer(data_path("player.pnct"));
+	player_meshes_for_lit_color_texture_program =
+		ret->make_vao_for_program(lit_color_texture_program->program);
+	return ret; });
 
-		drawable.pipeline = lit_color_texture_program_pipeline;
+Load<Scene> player_scene(LoadTagDefault, []() -> Scene const *
+						 { return new Scene(data_path("player.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name)
+											{
+												 Mesh const &mesh = player_meshes->lookup(mesh_name);
 
-		drawable.pipeline.vao = hexapod_meshes_for_lit_color_texture_program;
-		drawable.pipeline.type = mesh.type;
-		drawable.pipeline.start = mesh.start;
-		drawable.pipeline.count = mesh.count;
+												 scene.drawables.emplace_back(transform);
+												 Scene::Drawable &drawable = scene.drawables.back();
 
-	});
-});
+												 drawable.pipeline = lit_color_texture_program_pipeline;
 
-Load< Sound::Sample > dusty_floor_sample(LoadTagDefault, []() -> Sound::Sample const * {
-	return new Sound::Sample(data_path("dusty-floor.opus"));
-});
+												 drawable.pipeline.vao = player_meshes_for_lit_color_texture_program;
+												 drawable.pipeline.type = mesh.type;
+												 drawable.pipeline.start = mesh.start;
+												 drawable.pipeline.count = mesh.count; }); });
 
+Load<Sound::Sample> song_sample(LoadTagDefault, []() -> Sound::Sample const *
+								{ return new Sound::Sample(data_path("song.wav")); });
+Load<Sound::Sample> hit_sample(LoadTagDefault, []() -> Sound::Sample const *
+							   { return new Sound::Sample(data_path("HitSound.wav")); });
+Load<Sound::Sample> step_sample(LoadTagDefault, []() -> Sound::Sample const *
+								{ return new Sound::Sample(data_path("Step.wav")); });
+Load<Sound::Sample> jump_sample(LoadTagDefault, []() -> Sound::Sample const *
+								{ return new Sound::Sample(data_path("Jump.wav")); });
 
-Load< Sound::Sample > honk_sample(LoadTagDefault, []() -> Sound::Sample const * {
-	return new Sound::Sample(data_path("honk.wav"));
-});
+GLuint tileset_meshes_for_lit_color_texture_program = 0;
 
+Load<MeshBuffer> tileset_meshes(LoadTagDefault, []() -> MeshBuffer const *
+								{
+	MeshBuffer const *ret = new MeshBuffer(data_path("tileset.pnct"));
 
-PlayMode::PlayMode() : scene(*hexapod_scene) {
-	//get pointers to leg for convenience:
-	for (auto &transform : scene.transforms) {
-		if (transform.name == "Hip.FL") hip = &transform;
-		else if (transform.name == "UpperLeg.FL") upper_leg = &transform;
-		else if (transform.name == "LowerLeg.FL") lower_leg = &transform;
+	tileset_meshes_for_lit_color_texture_program =
+		ret->make_vao_for_program(lit_color_texture_program->program);
+
+	return ret; });
+
+void PlayMode::load_level(int index)
+{
+	if (index < 0 || index >= lvl_cnt)
+	{
+		return;
 	}
-	if (hip == nullptr) throw std::runtime_error("Hip not found.");
-	if (upper_leg == nullptr) throw std::runtime_error("Upper leg not found.");
-	if (lower_leg == nullptr) throw std::runtime_error("Lower leg not found.");
 
-	hip_base_rotation = hip->rotation;
-	upper_leg_base_rotation = upper_leg->rotation;
-	lower_leg_base_rotation = lower_leg->rotation;
+	int const layouts[lvl_cnt][Rows][Columns] = {
+		{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 2, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0},
+		 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0},
+		 {0, 0, 0, 0, 0, 3, 0, 0, 1, 1, 1, 1},
+		 {0, 2, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1},
+		 {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0},
+		 {0, 2, 3, 0, 0, 1, 1, 0, 0, 0, 3, 0},
+		 {1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1}},
+		{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0},
+		 {0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 3},
+		 {0, 2, 3, 0, 0, 1, 1, 1, 0, 0, 1, 1},
+		 {1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1}}};
 
-	//get pointer to camera for convenience:
-	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
-	camera = &scene.cameras.front();
+	tiles.clear();
+	level.drawables.clear();
+	level.transforms.clear();
 
-	//start music loop playing:
-	// (note: position will be over-ridden in update())
-	leg_tip_loop = Sound::loop_3D(*dusty_floor_sample, 1.0f, get_leg_tip_position(), 10.0f);
-}
+	current_level = index;
 
-PlayMode::~PlayMode() {
-}
+	game_finished = false;
 
-bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+	Mesh const &obstacle_mesh = tileset_meshes->lookup("Base_Tile");
 
-	if (evt.type == SDL_EVENT_KEY_DOWN) {
-		if (evt.key.key == SDLK_ESCAPE) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, false);
-			return true;
-		} else if (evt.key.key == SDLK_A) {
-			left.downs += 1;
-			left.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.downs += 1;
-			right.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_SPACE) {
-			if (honk_oneshot) honk_oneshot->stop();
-			honk_oneshot = Sound::play_3D(*honk_sample, 0.3f, glm::vec3(4.6f, -7.8f, 6.9f)); //hardcoded position of front of car, from blender
+	float tile_scale = TileSize / (obstacle_mesh.max.x - obstacle_mesh.min.x);
+
+	for (int row = 0; row < Rows; ++row)
+	{
+		for (int column = 0; column < Columns; ++column)
+		{
+			int cell = layouts[current_level][row][column];
+
+			if (cell == 0)
+			{
+				continue;
+			}
+
+			if (cell == 2)
+			{
+				body->position = glm::vec3((float(column) - 0.5f * float(Columns - 1)) * TileSize, 0.0f, (float(Rows - 1 - row) + 0.5f) * TileSize);
+				continue;
+			}
+
+			Mesh const &mesh = tileset_meshes->lookup(
+				cell == 3 ? "Enemy" : "Base_Tile");
+
+			level.transforms.emplace_back();
+			Scene::Transform &transform = level.transforms.back();
+
+			transform.position = glm::vec3(
+				(float(column) - 0.5f * float(Columns - 1)) * TileSize,
+				0.0f,
+				(0.5f * float(Rows - 1) - float(row)) * TileSize - mesh.min.z * tile_scale);
+
+			transform.scale = glm::vec3(tile_scale);
+
+			level.drawables.emplace_back(&transform);
+			Scene::Drawable &drawable = level.drawables.back();
+
+			drawable.pipeline = lit_color_texture_program_pipeline;
+			drawable.pipeline.vao = tileset_meshes_for_lit_color_texture_program;
+			drawable.pipeline.type = mesh.type;
+			drawable.pipeline.start = mesh.start;
+			drawable.pipeline.count = mesh.count;
+
+			Tile tile;
+			tile.bounds = make_aabb(mesh, transform);
+			tile.drawable = &drawable;
+			tile.target = cell == 3;
+
+			tiles.push_back(tile);
 		}
-	} else if (evt.type == SDL_EVENT_KEY_UP) {
-		if (evt.key.key == SDLK_A) {
+	}
+
+	player_health = 240.0;
+	player_velocity = glm::vec2(0.0f);
+	grounded = false;
+	glm::vec2 center = glm::vec2(body->position.x, body->position.z);
+
+	// create 1x1 aabb
+	player_bounds.min = center - glm::vec2(0.5f, 0.5f);
+	player_bounds.max = center + glm::vec2(0.5f, 0.5f);
+	camera->transform->position = body->position + camera_offset;
+
+	step_timer = 0.0f;
+
+	start_song();
+}
+
+PlayMode::PlayMode() : scene(*player_scene)
+{
+	for (auto &transform : scene.transforms)
+	{
+		if (transform.name == "Player")
+		{
+			body = &transform;
+		}
+	}
+
+	if (body == nullptr)
+	{
+		throw std::runtime_error("Body not found.");
+	}
+
+	body->rotation = glm::angleAxis(
+		glm::radians(90.0f),
+		glm::vec3(0.0f, 0.0f, 1.0f));
+
+	camera = &scene.cameras.back();
+	camera->fovy = glm::radians(45.0f);
+
+	camera->transform->scale = glm::vec3(1.0f);
+
+	camera->transform->rotation = glm::angleAxis(
+		glm::radians(90.0f),
+		glm::vec3(1.0f, 0.0f, 0.0f));
+
+	camera->fovy = glm::radians(45.0f);
+	camera->transform->position = body->position + camera_offset;
+
+	SDL_SetWindowRelativeMouseMode(Mode::window, false);
+
+	body->scale = glm::vec3(1.0f);
+
+	load_level(0);
+}
+void PlayMode::start_song()
+{
+	if (song)
+	{
+		song->stop(0.0f);
+	}
+
+	song_start = double(SDL_GetTicksNS()) * 1.0e-9;
+	song = Sound::play(*song_sample);
+}
+PlayMode::~PlayMode()
+{
+}
+
+bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
+{
+	if (evt.type == SDL_EVENT_KEY_DOWN)
+	{
+		if (evt.key.key == SDLK_A)
+		{
+			left.pressed = true;
+			facing = false;
+			return true;
+		}
+		else if (evt.key.key == SDLK_D)
+		{
+			right.pressed = true;
+			facing = true;
+			return true;
+		}
+		else if (evt.key.key == SDLK_SPACE)
+		{
+			if (!evt.key.repeat && grounded)
+			{
+				player_velocity.y = 7.0f;
+				grounded = false;
+				Sound::play(*jump_sample, 0.5f);
+			}
+
+			return true;
+		}
+	}
+	else if (evt.type == SDL_EVENT_KEY_UP)
+	{
+		if (evt.key.key == SDLK_A)
+		{
 			left.pressed = false;
 			return true;
-		} else if (evt.key.key == SDLK_D) {
+		}
+		else if (evt.key.key == SDLK_D)
+		{
 			right.pressed = false;
 			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.pressed = false;
-			return true;
 		}
-	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, true);
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
-			glm::vec2 motion = glm::vec2(
-				evt.motion.xrel / float(window_size.y),
-				-evt.motion.yrel / float(window_size.y)
-			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
+	}
+	else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+	{
+		if (evt.button.button == SDL_BUTTON_LEFT)
+		{
+			attack(double(evt.button.timestamp) * 1.0e-9);
 			return true;
 		}
 	}
@@ -136,110 +274,362 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 	return false;
 }
 
-void PlayMode::update(float elapsed) {
-
-	//slowly rotates through [0,1):
-	wobble += elapsed / 10.0f;
-	wobble -= std::floor(wobble);
-
-	hip->rotation = hip_base_rotation * glm::angleAxis(
-		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-	upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
-		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-
-	//move sound to follow leg tip position:
-	leg_tip_loop->set_position(get_leg_tip_position(), 1.0f / 60.0f);
-
-	//move camera:
-	{
-
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
-
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
-	}
-
-	{ //update listener to camera position:
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		glm::vec3 frame_at = frame[3];
-		Sound::listener.set_position_right(frame_at, frame_right, 1.0f / 60.0f);
-	}
-
-	//reset button press counters:
-	left.downs = 0;
-	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
+bool PlayMode::aabb_intersect(AABB const &a, AABB const &b) const
+{
+	return a.min.x < b.max.x &&
+		   a.max.x > b.min.x &&
+		   a.min.y < b.max.y &&
+		   a.max.y > b.min.y;
 }
 
-void PlayMode::draw(glm::uvec2 const &drawable_size) {
-	//update camera aspect ratio for drawable:
+PlayMode::AABB PlayMode::make_aabb(Mesh const &mesh, Scene::Transform const &transform) const
+{
+	glm::mat4x3 world_from_local = transform.make_world_from_local();
+
+	AABB bounds;
+	bounds.min = glm::vec2(std::numeric_limits<float>::infinity());
+	bounds.max = glm::vec2(-std::numeric_limits<float>::infinity());
+
+	glm::vec3 transformed = world_from_local * glm::vec4(mesh.min.x, mesh.min.y, mesh.min.z, 1.0f);
+	glm::vec2 point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.min.x, mesh.min.y, mesh.max.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.min.x, mesh.max.y, mesh.min.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.min.x, mesh.max.y, mesh.max.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.max.x, mesh.min.y, mesh.min.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.max.x, mesh.min.y, mesh.max.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.max.x, mesh.max.y, mesh.min.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	transformed = world_from_local * glm::vec4(mesh.max.x, mesh.max.y, mesh.max.z, 1.0f);
+	point = glm::vec2(transformed.x, transformed.z);
+
+	bounds.min = glm::min(bounds.min, point);
+	bounds.max = glm::max(bounds.max, point);
+
+	return bounds;
+}
+
+void PlayMode::attack(double time)
+{
+	double song_time = time - song_start - audio_offset;
+
+	double beat_length = 60.0 / song_bpm;
+	long long beat = std::llround((song_time - first_beat) / beat_length);
+
+	double beat_time = first_beat + double(beat) * beat_length;
+
+	glm::vec2 position = glm::vec2(body->position.x, body->position.z);
+	Tile *target = nullptr;
+	float closest_dist = float(std::numeric_limits<float>::infinity());
+
+	for (Tile &tile : tiles)
+	{
+		if (!tile.target || !tile.alive)
+		{
+			continue;
+		}
+		glm::vec2 enemy_pos = 0.5f * (tile.bounds.min + tile.bounds.max);
+
+		if (facing)
+		{
+			if (enemy_pos.x <= position.x)
+			{
+				continue;
+			}
+		}
+		else
+		{
+			if (enemy_pos.x >= position.x)
+			{
+				continue;
+			}
+		}
+
+		float dist = glm::length(position - enemy_pos);
+		if (dist <= closest_dist)
+		{
+			closest_dist = dist;
+			target = &tile;
+		}
+	}
+
+	if (closest_dist > attack_range || target == nullptr)
+	{
+		return;
+	}
+
+	double error = std::abs(song_time - beat_time);
+
+	double perfect_window = beat_length * 0.10;
+	double good_window = beat_length * 0.25;
+	double okay_window = beat_length * 0.35;
+
+	double accuracy;
+
+	if (error <= perfect_window)
+	{
+		accuracy = 1.0;
+	}
+	else if (error <= good_window)
+	{
+		accuracy = 0.66;
+	}
+	else if (error <= okay_window)
+	{
+		accuracy = 0.33;
+	}
+	else
+	{
+		accuracy = 0.0;
+	}
+
+	if (accuracy < 0.5)
+	{
+
+		player_health -= target->damage * (1.0 - accuracy * 2.0);
+
+		if (player_health <= 0.0f)
+		{
+			load_level(current_level);
+		}
+
+		return;
+	}
+
+	else
+	{
+		float damage = glm::clamp(attack_damage * float(accuracy), 0.0f, attack_damage);
+
+		target->health -= damage;
+		Sound::play(*hit_sample, 0.7f);
+
+		if (target->health <= 0.0f)
+		{
+			target->alive = false;
+			target->drawable->pipeline.count = 0;
+		}
+	}
+}
+
+void PlayMode::update(float elapsed)
+{
+	if (game_finished)
+	{
+		return;
+	}
+	if (facing)
+	{
+		body->rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(90.0f)));
+	}
+	else
+	{
+		body->rotation = glm::quat(glm::vec3(0.0f, 0.0f, glm::radians(-90.0f)));
+	}
+
+	bool end_lvl = true;
+
+	for (Tile const &tile : tiles)
+	{
+		if (tile.target && tile.alive)
+		{
+			end_lvl = false;
+			break;
+		}
+	}
+
+	if (end_lvl)
+	{
+		if (current_level + 1 < lvl_cnt)
+		{
+			load_level(current_level + 1);
+		}
+		else
+		{
+			game_finished = true;
+			player_velocity = glm::vec2(0.0f);
+			grounded = false;
+
+			if (song)
+			{
+				song->stop();
+			}
+		}
+
+		return;
+	}
+
+	player_velocity.x = 0.0f;
+	if (right.pressed)
+	{
+		player_velocity.x += move_speed;
+	}
+	if (left.pressed)
+	{
+		player_velocity.x -= move_speed;
+	}
+
+	float dt = glm::min(elapsed, 0.1f);
+	player_velocity.y = glm::max(player_velocity.y - 18.0f * dt, -15.0f);
+
+	// Keep the movement direction even after a collision zeros the velocity.
+	glm::vec2 const movement = player_velocity * dt;
+	body->position.x += movement.x;
+	glm::vec2 center = glm::vec2(body->position.x, body->position.z);
+	player_bounds.min = center - glm::vec2(0.5f);
+	player_bounds.max = center + glm::vec2(0.5f);
+
+	for (Tile const &tile : tiles)
+	{
+		if (!tile.alive || !aabb_intersect(player_bounds, tile.bounds))
+		{
+			continue;
+		}
+		player_velocity.x = 0.0f;
+		if (movement.x > 0.0f)
+		{
+			body->position.x = tile.bounds.min.x - 0.5f;
+		}
+		else
+		{
+			body->position.x = tile.bounds.max.x + 0.5f;
+		}
+
+		center = glm::vec2(body->position.x, body->position.z);
+		player_bounds.min = center - glm::vec2(0.5f);
+		player_bounds.max = center + glm::vec2(0.5f);
+	}
+
+	grounded = false;
+
+	body->position.z += movement.y;
+
+	// recalc bounds for next collision check
+	center = glm::vec2(body->position.x, body->position.z);
+	player_bounds.min = center - glm::vec2(0.5f);
+	player_bounds.max = center + glm::vec2(0.5f);
+
+	for (Tile const &tile : tiles)
+	{
+		if (!tile.alive || !aabb_intersect(player_bounds, tile.bounds))
+		{
+			continue;
+		}
+
+		player_velocity.y = 0.0f;
+		if (movement.y > 0.0f)
+		{
+			body->position.z = tile.bounds.min.y - 0.5f;
+		}
+		else
+		{
+			body->position.z = tile.bounds.max.y + 0.5f;
+			grounded = true;
+		}
+
+		center = glm::vec2(body->position.x, body->position.z);
+		player_bounds.min = center - glm::vec2(0.5f);
+		player_bounds.max = center + glm::vec2(0.5f);
+	}
+
+	if (grounded && player_velocity.x != 0.0f)
+	{
+		step_timer -= dt;
+
+		if (step_timer <= 0.0f)
+		{
+			Sound::play(*step_sample, 0.4f);
+			step_timer += step_interval;
+		}
+	}
+	else
+	{
+		step_timer = 0.0f;
+	}
+
+	if (body->position.z < -10.0f)
+	{
+		load_level(current_level);
+	}
+
+	camera->transform->position = body->position + camera_offset;
+	Sound::listener.set_position_right(
+		camera->transform->position, glm::vec3(1.0f, 0.0f, 0.0f), elapsed);
+}
+
+void PlayMode::draw(glm::uvec2 const &drawable_size)
+{
+	// update camera aspect ratio for drawable:
 	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
 
-	//set up light type and position for lit_color_texture_program:
-	// TODO: consider using the Light(s) in the scene to do this
+	// set up light type and position for lit_color_texture_program:
+	//  TODO: consider using the Light(s) in the scene to do this
 	glUseProgram(lit_color_texture_program->program);
 	glUniform1i(lit_color_texture_program->LIGHT_TYPE_int, 1);
-	glUniform3fv(lit_color_texture_program->LIGHT_DIRECTION_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 0.0f,-1.0f)));
+	glUniform3fv(lit_color_texture_program->LIGHT_DIRECTION_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 0.0f, -1.0f)));
 	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
 	glUseProgram(0);
 
 	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
-	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
+	glClearDepth(1.0f); // 1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LESS); //this is the default depth comparison function, but FYI you can change it.
+	glDepthFunc(GL_LESS); // this is the default depth comparison function, but FYI you can change it.
 
 	scene.draw(*camera);
+	level.draw(*camera);
 
-	{ //use DrawLines to overlay some text:
+	{ // use DrawLines to overlay some text:
 		glDisable(GL_DEPTH_TEST);
 		float aspect = float(drawable_size.x) / float(drawable_size.y);
 		DrawLines lines(glm::mat4(
 			1.0f / aspect, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
 			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
+			0.0f, 0.0f, 0.0f, 1.0f));
 
 		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
+		lines.draw_text("Use A + D to move, Space to jump, Left Click to attack.",
+						glm::vec3(-aspect + 0.1f * H, -1.0 + 1.1f * H, 0.0),
+						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+						glm::u8vec4(0x00, 0x00, 0x00, 0x00));
 		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		lines.draw_text("Time your attacks to the music. If you miss, you take damage.",
+						glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + +0.1f * H + ofs, 0.0),
+						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+						glm::u8vec4(0xff, 0xff, 0xff, 0x00));
 	}
 	GL_ERRORS();
-}
-
-glm::vec3 PlayMode::get_leg_tip_position() {
-	//the vertex position here was read from the model in blender:
-	return lower_leg->make_world_from_local() * glm::vec4(-1.26137f, -11.861f, 0.0f, 1.0f);
 }
